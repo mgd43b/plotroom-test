@@ -2,3 +2,8 @@
 id = 1
 type = "story"
 title = "Fixture ticket"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Fixture follow-up"
