@@ -1,0 +1,67 @@
+name: Plotroom fixture CI
+
+"on":
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-checks:
+    name: Fixture checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Verify and record the event commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              pr_head=$(jq -er '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
+              [[ "$GITHUB_REF" =~ ^refs/pull/[1-9][0-9]*/merge$ ]]
+              [[ "$pr_head" =~ ^[0-9a-f]{40}$ ]]
+              ;;
+            push)
+              test "$GITHUB_REF" = refs/heads/main
+              test "$(jq -er '.after' "$GITHUB_EVENT_PATH")" = "$GITHUB_SHA"
+              pr_head='-'
+              ;;
+            *) exit 2 ;;
+          esac
+          printf 'event=%s ref=%s event_sha=%s pr_head_sha=%s run_id=%s attempt=%s\n' \
+            "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_SHA" "$pr_head" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+
+  fixture-image:
+    name: Fixture image build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Build and verify a local scratch image
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d "${RUNNER_TEMP:?}/plotroom-fixture.XXXXXX")
+          image="plotroom-fixture-local:${work##*.}"
+          cleanup() {
+            if docker image inspect "$image" >/dev/null 2>&1; then
+              docker image rm "$image" >/dev/null
+            fi
+            rm -rf -- "$work"
+          }
+          trap cleanup EXIT
+          mkdir "$work/context"
+          printf 'plotroom fixture image\n' > "$work/context/fixture.txt"
+          printf 'FROM scratch\nCOPY fixture.txt /fixture.txt\n' > "$work/context/Dockerfile"
+          timeout -k 5s 90s docker buildx build --network=none --pull=false --no-cache \
+            --provenance=false --load --tag "$image" "$work/context"
+          docker image inspect --format '{{json .RootFS.Layers}}' "$image" |
+            jq -e 'length == 1 and (.[0] | test("^sha256:[0-9a-f]{64}$"))'
+          docker image rm "$image"
