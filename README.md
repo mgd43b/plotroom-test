@@ -1,3 +1,3 @@
-# Plotroom test fixture
+# Plotroom branch-update fixture
 
 Synthetic data for dedicated GitHub projection checks.
